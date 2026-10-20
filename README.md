@@ -83,5 +83,8 @@ Claude Code で次を実行します。
 ## 更新
 
 ```
-/plugin marketplace update worklog-marketplace
+claude plugin marketplace update worklog-marketplace   # 配布元の最新情報を取得
+claude plugin update worklog@worklog-marketplace         # インストール済みのプラグインを更新
 ```
+
+更新後は Claude Code を再起動してください。`/plugin` のメニューからも更新できます。
