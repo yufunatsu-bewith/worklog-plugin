@@ -115,10 +115,87 @@ function formatTable(rows) {
 }
 
 // 一時ファイル経由で書き換える。途中で落ちても worklog.md が壊れないようにする
+// （一時ファイル名にプロセス ID を含め、別セッションの書き込みと取り違えないようにする）
 function writeTable(file, rows) {
-  const tmp = `${file}.tmp`;
+  const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, formatTable(rows), 'utf8');
   fs.renameSync(tmp, file);
+}
+
+// ---------- ロック ----------
+// 同じ PC で複数のセッションが同時に終了すると、worklog.md の読み書きや CSV への同期が重なる。
+// ~/.claude/worklog/<name>.lock を排他的に作れたプロセスだけが処理を進める。
+// 異常終了で残ったロックは staleMs を過ぎたら古いものとみなして奪う
+
+function lockFile(name) {
+  return path.join(paths().dir, `${name}.lock`);
+}
+
+// 取れたら true。他のプロセスが持っていれば false（待たない）
+function tryLock(name, staleMs) {
+  const file = lockFile(name);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  try {
+    fs.writeFileSync(file, `${process.pid} ${new Date().toISOString()}`, { flag: 'wx' });
+    return true;
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw e;
+  }
+  try {
+    if (Date.now() - fs.statSync(file).mtimeMs > staleMs) {
+      fs.unlinkSync(file);
+      log(`古いロック ${name}.lock を削除`);
+    }
+  } catch {
+    // 他のプロセスが先に消した場合など。次の試行に任せる
+  }
+  return false;
+}
+
+function unlock(name) {
+  try {
+    fs.unlinkSync(lockFile(name));
+  } catch {
+    // 既に無ければそれでよい
+  }
+}
+
+// hook は同期処理で書かれている箇所が多いため、待機もブロッキングで行う
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// worklog.md の読み込み〜書き戻しを他のプロセスと重ねずに行う。
+// 待っても取れない場合は、記録を失うよりはましなのでロック無しで進める
+function withTableLock(fn) {
+  const deadline = Date.now() + 10000;
+  let locked = tryLock('worklog-md', 30000);
+  while (!locked && Date.now() < deadline) {
+    sleepSync(100 + Math.random() * 150);
+    locked = tryLock('worklog-md', 30000);
+  }
+  if (!locked) log('worklog.md のロックを取得できないまま書き込みます');
+  try {
+    return fn();
+  } finally {
+    if (locked) unlock('worklog-md');
+  }
+}
+
+// 最新の worklog.md を読み、fn で書き換えて保存する。
+// 読んでから書くまでの間に他のプロセスが足した行を消さないよう、必ずこれを通して更新する
+function updateTable(file, fn) {
+  return withTableLock(() => {
+    const { rows } = readTable(file);
+    const result = fn(rows);
+    writeTable(file, rows);
+    return result;
+  });
+}
+
+// 行を一意に表すキー。1セッションから複数行が出ても、区間の開始時刻で区別できる
+function rowKey(row) {
+  return `${row['session_id']}|${row['開始']}`;
 }
 
 function appendRow(file, row) {
@@ -128,9 +205,9 @@ function appendRow(file, row) {
 // 1セッションが複数 issue にまたがる場合、区間ごとの複数行を一度に追記する
 function appendRows(file, newRows) {
   if (!newRows.length) return;
-  const { rows } = readTable(file);
-  rows.push(...newRows);
-  writeTable(file, rows);
+  updateTable(file, (rows) => {
+    rows.push(...newRows);
+  });
 }
 
 // 行がどのリポジトリの issue を指すかを解決する。
@@ -200,6 +277,10 @@ module.exports = {
   mdField,
   readTable,
   writeTable,
+  updateTable,
+  rowKey,
+  tryLock,
+  unlock,
   appendRow,
   appendRows,
   rowRepo,

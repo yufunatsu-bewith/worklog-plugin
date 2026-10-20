@@ -15,6 +15,9 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const lib = require('./worklog-lib.cjs');
 
+// hook の起動時刻。SessionEnd の timeout（120秒）から逆算して CSV 同期の持ち時間を決める
+const STARTED = Date.now();
+
 // タイトル生成のために起動する `claude -p` の子セッションでも hook は発火する。
 // そのままだと SessionEnd が再帰的に自分を呼び出し続けるため、子側では即座に何もせず終了する。
 if (process.env.CLAUDE_WORKLOG_DISABLE === '1') {
@@ -229,7 +232,10 @@ async function record({ sessionId, transcriptPath, cwd: cwdIn, keep }) {
   // issue に紐づいている行があればここで CSV へ書き出す。
   // 失敗しても worklog.md への記録は済んでいるので、次回セッション開始時にリトライされる
   try {
-    await require('./worklog-csv-sync.cjs').syncAll();
+    // /exit のときはタイトル要約で使った時間を差し引き、hook の timeout 前に終わらせる。
+    // /worklog（Bash の timeout 300秒）のときは余裕があるので長めに取る
+    const budgetMs = keep ? 120000 : Math.max(10000, 110000 - (Date.now() - STARTED));
+    await require('./worklog-csv-sync.cjs').syncAll({ budgetMs });
   } catch (e) {
     lib.log(`工数記録からの同期呼び出しが失敗: ${String(e.message).trim()}`);
   }
