@@ -1,0 +1,7 @@
+{
+  "name": "worklog",
+  "version": "1.0.0",
+  "description": "Claude Code のセッション時間を自動で記録し、GitHub Issue のリポジトリにある worklog.csv へ工数を追記する",
+  "author": { "name": "yufunatsu-bewith" },
+  "repository": "https://github.com/yufunatsu-bewith/worklog-plugin"
+}

@@ -1,0 +1,8 @@
+{
+  "repo": "your-org/your-repo",
+  "repos": [],
+  "csvPath": "worklog.csv",
+  "csvBranch": "worklog",
+  "auth": "gh",
+  "idleMinutes": 15
+}
